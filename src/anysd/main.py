@@ -9,7 +9,7 @@ from typing import Callable, List, Union
 import redis
 from anytree import Node, NodeMixin
 
-from .conf import FormBackError, r, back_symbol, home_symbol, NavigationBackError, config, \
+from .conf import FormBackError, RedirectError, r, back_symbol, home_symbol, NavigationBackError, config, \
     NavigationInvalidChoice, ImproperlyConfigured, ConditionEvaluationError, ConditionResultError, rc, TranslationError, \
     global_var_key
 
@@ -350,6 +350,8 @@ class FormFlow:
                 resp = self.get_invalid_input(menu=_menu(
                     msisdn=msisdn, session_id=session_id, ussd_string=ussd_string, lang=lang, data={}, state=_state,
                     scope='menu')[4:], lang=lang)
+            elif isinstance(_menu, FormRedirect):
+                raise RedirectError('Redirecting to another form.')
             else:
                 resp = self.get_invalid_input(menu=_menu, lang=lang, state=_state)
 
@@ -357,7 +359,7 @@ class FormFlow:
         # start get the response for next menu
         
         # to get language before next menu
-        lang = get_var(msisdn=msisdn, session_id=session_id, var=os.getenv('SELECTED_LANGUAGE_KEY', 'SELECTED_LANGUAGE'))
+        lang = get_var(msisdn=msisdn, session_id=session_id, var=os.getenv('SELECTED_LANGUAGE_KEY', 'SELECTED_LANGUAGE')) or 'en'
         
         _state['USSD_RESPONSE_MENU_NAME'] = resp.get('name')
         if isinstance(resp['menu'], ListInput):
@@ -723,6 +725,10 @@ class NavigationController(BaseUSSD):
         try:
             resp = _menu(processed_path, offset=offset)
             r.hset(self.redis_key, 'LAST_SUCCESS_RESPONSE', resp)
+        except RedirectError: 
+            resp = _menu(self.get_processed_path(), offset=offset)
+            r.hset(self.redis_key, 'LAST_SUCCESS_RESPONSE', resp)
+
         except FormBackError:
             # we pop the last path since it was pointing to a form, and now we can't go back further in the form
             # , so we also pop the path that led us to the form,
@@ -799,3 +805,9 @@ class NavigationController(BaseUSSD):
             
         resp = resp.format(**kwargs)
         return resp
+
+
+class FormRedirect:
+    def __init__(self, form: FormFlow = None, state: dict = None):
+        self.form = form
+        self.state = state
